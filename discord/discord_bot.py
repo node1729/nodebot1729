@@ -21,19 +21,23 @@ commands_file = open("commands.json")
 commands = json.load(commands_file)
 commands_file.close()
 
+
+# TODO: Make everything return something that makes sense with other functions
 class DiscordBot(discord.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         # self.bg_task = self.loop.create_task(self.background_timer())
         self.loop.create_task(self.config_default_channel())
+    async def on_ready(self):
+        print("Logged in as {0}".format(self.user))
 
     # configures the default channel for messages
     async def config_default_channel(self):
         await self.wait_until_ready()
         
         if not self.get_channel(commands["default"]["channel"]):# if the channel is not assigned properly,
-                                                                        # attempt to assign it to general
+                                                                # attempt to assign it to general
             channel = discord.utils.get(self.get_all_channels(), name="bot-commands")
             if channel:
                 await self.reconfig_channel(channel.id, "default")
@@ -43,6 +47,7 @@ class DiscordBot(discord.Client):
                 channel = next(channel)
                 await self.reconfig_channel(channel.id, "default")
 
+    #edits what channel a commmand belongs in
     async def reconfig_channel(self, channel_id, command):  # return True if channel is successfully changed
         if not type(channel_id) == int:
             try:
@@ -65,9 +70,6 @@ class DiscordBot(discord.Client):
             print("Error finding channel")
             return False
 
-    async def on_ready(self):
-        print("Logged in as {0}".format(self.user))
-
     async def command_move(self, message):
         if message.author.guild_permissions.administrator:
             msg = re.split(" ", message.content, 2)
@@ -76,11 +78,12 @@ class DiscordBot(discord.Client):
                 command_move = msg[1]
                 print(msg)
                 await self.reconfig_channel(channel_id, command_move)
-                await message.channel.send("Successfully moved {} to {}".format(command_move, channel_id))
-    
-    #########################################################
-    # begin Functions to handle commands from commands.json # 
-    #########################################################
+                output = await message.channel.send("Successfully moved {} to {}".format(command_move, channel_id))
+                return output
+                
+    ###################
+    # COMMAND HANDLER #
+    ###################
     
     async def command_simple_message(self, message, key=None, from_file=None, data=None): # command for sending a "message" from the commands.json file
         if not key:
@@ -94,19 +97,16 @@ class DiscordBot(discord.Client):
             if from_file:
                 fp = open(from_file, "rb")
                 from_file = discord.File(fp)
-            await client.get_channel(channel).send(data, file=from_file)
-            return True
-        
-    #######################################################
-    # end Functions to handle commands from commands.json #
-    #######################################################
+            output = await client.get_channel(channel).send(data, file=from_file)
+            return output
+        return False
     
+
     async def on_message(self, message): # returns true if command is processed
-        
         if message.author != self.user: # ignore messages from the bot 
             if message.content.startswith("default ") or message.content == "default":
                 return False
-            print("message from {0.author} in {0.channel}: {0.content}".format(message))
+            print("message from {0.author} in {0.channel.id}: {0.content} ".format(message))
             built_in_commands = {
                                 "!move": self.command_move
                                 # "!connect": self.connect_to_voice
@@ -114,32 +114,21 @@ class DiscordBot(discord.Client):
             for key in built_in_commands:
                 if message.channel.id == commands["default"]["channel"]:
                     if message.content.startswith(key + " ") or message.content == key:
-                        await built_in_commands[key](message)
-                        return True
+                        output = await built_in_commands[key](message)
+                        return output
 
             for key in commands:
                 if message.channel.id == commands[key]["channel"]: 
                     if message.content.startswith(key + " ") or message.content == key:
                         if commands[key]["return_type"] == "message":
-                            await self.command_simple_message(message, key=key)
-                            return True
+                            output = await self.command_simple_message(message, key=key)
+                            return output
         return False
 
     # creates a reaction on a message
     async def make_react(self, message, emoji):
         await message.add_reaction(emoji)
         return True
-    
-    
-    ##############
-    # GAME STUFF #
-    ##############
-    
-    async def create_selection_emoji(self, message):
-        await self.make_react(message, ":one:")
-        await self.make_react(message, ":two:")
-        return True
-    
     
     ###############
     # OTHER STUFF #
@@ -176,11 +165,18 @@ class DiscordBot(discord.Client):
     #         #    await channel.send("Reminder")
     #         await asyncio.sleep(1)
 
-    # ####################################
-    # # Begin of functions to play music # (THIS HAS HALTED PROGRESS FOR NOW)
-    # ####################################
+    # #########
+    # # MUSIC # (THIS HAS HALTED PROGRESS FOR NOW)
+    # #########
     # async def connect_to_voice(self, message):
     #     await discord.VoiceChannel.connect()
 
+# TODO: implement proper reading of DMs and feeding into a main game
+class TruthAndLiePlayer():
+    async def __init__(self, *args, **kwargs):
+        self.player = player_id
+        # self.loop.create_task(self.)
+    
+    
 client = DiscordBot()
 client.run(clientdict["token"])
