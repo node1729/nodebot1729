@@ -242,8 +242,10 @@ class OutLaugh():
         self.questions = self.f.readlines()
         self.f.close()
         self.user = user
+        self.pairs = []
+        self.deny_players = []
+        # self.answers = {}
         print(repr(self.loop))
-        # for i in range(len(players)) * 2:
     
     async def on_message(self, message):
         if message.author != self.user:
@@ -268,20 +270,64 @@ class OutLaugh():
         return False
     
     # TODO: implement main game logic to start the game
-    # def start_game(self):
+    # TODO: implement swap_player() to ensure that no player is left without a pair
+    def start_game(self):
+        for i in range(len(self.players)):
+            pair = self.get_pair(self.players)
+            self.pairs.append(pair)
+        while len(self.deny_players) == len(self.players) - 1:
+            players = []
+            for player in self.players:
+                players.append(player)
+            for player in self.deny_players:
+                players.remove(player)
+            player = players[0]
+            
 
+    def ensure_distribution(self, pair):
+        player1_count = 0
+        player2_count = 0
+        for item in self.pairs:
+            for player in pair:
+                if player[0] in item:
+                    player1_count += 1
+                if player[1] in item:
+                    player1_count += 1
+        if player1_count == 2 and player2_count < 2:
+            return [player1]
+        if player1_count < 2 and player2_count == 2:
+            return [player2]
+        if player1_count == 2 and player2_count == 2:
+            return [player1, player2]
+        else:
+            return False
+
+    
     def get_question(self):
         question = random.choice(self.questions)
         self.questions.remove(question)
         return question
     
-    def get_pair(self, player):
+    def get_pair(self, players, keep_player=None):
+        if keep_player:
+            player1 = keep_player
+        else:
+            player1 = random.choice(self.players)
+            while in self.deny_players:
+                player1 = random.choice(self.players)
         player2 = random.choice(self.players)
-        while player2 == player:
+        while player2 in self.deny_players:
+            player2 = random.choice(self.players)
+        while player1 == player2:
             if len(self.players) == 1:
                 break
             player2 = random.choice(self.players)
         return [player, player2]
+
+    def swap_player(self, user):
+        pair = self.get_pair(self.players)
+        if self.ensure_distribution(pair) == :
+            
     
 class Question(OutLaugh):
     def __init__(self, question, players):
@@ -289,6 +335,15 @@ class Question(OutLaugh):
             direct_message(player, data=question)
         self.player1, self.player2 = players
         self.answers = {}
+    
+    def recv_question(self, user, answer):
+        self.answers[user] = answer
+        return True
+    
+    def ask_question(self, players, question):
+        for user in players:
+            client.direct_message(user=user, content=question)
+        return True
 
 class GamePlayer:
     def __init__(self, player):
