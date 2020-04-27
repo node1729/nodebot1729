@@ -234,18 +234,20 @@ class DiscordBot(discord.Client):
 # TODO: implement proper reading of DMs and feeding into a main game
 
 class OutLaugh():
-    def __init__(self, user):
-        # super().__init__(*args, **kwargs)
-        self.loop = asyncio.get_running_loop()
-        self.players = {}
+    def __init__(self, message):
+        self.max_players = 8
+        self.switches = re.split(" ", message.content)
+        self.switches = self.switches[1:]
+        self.guild_id = message.guild.id
+        for index, item in enumerate(self.switches):
+            if item == "--max_players":
+                self.max_players = int(self.switches[index + 1])
+        print(self.max_players)
+        self.players = []
         self.f = open("questions.txt")
         self.questions = self.f.readlines()
-        self.f.close()
         self.user = user
         self.pairs = []
-        self.deny_players = []
-        # self.answers = {}
-        print(repr(self.loop))
     
     async def on_message(self, message):
         if message.author != self.user:
@@ -259,76 +261,50 @@ class OutLaugh():
                 else:
                     await client.direct_message(message.channel.id, data="Either an error occured, you're already in the game, or there are too many players for you to join, {0.name}".format(message.author))
             if message.content == "!begin" and message.author == self.players[0]:
-                self.start_game()
+                if self.players < 4:
+                    client.direct_message(message.channel, data="Not enough players")
+                else:
+                    self.start_game()
 
     # returns true if able to add a new player
     def add_player(self, player):
-        if len(self.players) < 8:
+        if len(self.players) < self.max_players:
             if player not in self.players:
-                self.players[player] = GamePlayer(player)
+                self.players.append(player)
                 return True
         return False
     
     # TODO: implement main game logic to start the game
     # TODO: implement swap_player() to ensure that no player is left without a pair
     def start_game(self):
-        for i in range(len(self.players)):
-            pair = self.get_pair(self.players)
+        players1 = self.players
+        players2 = copy.deepcopy(self.players) # create new arrays for both player sets
+        pairs = []
+        for p1 in players1:
+            p2 = random.choice(players2)
+            pair = [p1, p2]
+            for p in self.pairs:
+                while p[0] == pair[1] and p[1] == pair[0]:
+                    p2 = random.choice(players2)
+                    pair = [p1, p2]
+            players2.remove(p2)
             self.pairs.append(pair)
-        while len(self.deny_players) == len(self.players) - 1:
-            players = []
-            for player in self.players:
-                players.append(player)
-            for player in self.deny_players:
-                players.remove(player)
-            player = players[0]
-            
-
-    def ensure_distribution(self, pair):
-        player1_count = 0
-        player2_count = 0
+        pairs_disp = []
         for item in self.pairs:
-            for player in pair:
-                if player[0] in item:
-                    player1_count += 1
-                if player[1] in item:
-                    player1_count += 1
-        if player1_count == 2 and player2_count < 2:
-            return [player1]
-        if player1_count < 2 and player2_count == 2:
-            return [player2]
-        if player1_count == 2 and player2_count == 2:
-            return [player1, player2]
-        else:
-            return False
+            player_out = []
+            for player in item:
+                player_out.append(player.id)
+            pairs_disp.append(player_out)
+        print(pairs_disp)
+        for pair in self.pairs:
+            Question.ask_question()
 
-    
     def get_question(self):
         question = random.choice(self.questions)
         self.questions.remove(question)
         return question
-    
-    def get_pair(self, players, keep_player=None):
-        if keep_player:
-            player1 = keep_player
-        else:
-            player1 = random.choice(self.players)
-            while in self.deny_players:
-                player1 = random.choice(self.players)
-        player2 = random.choice(self.players)
-        while player2 in self.deny_players:
-            player2 = random.choice(self.players)
-        while player1 == player2:
-            if len(self.players) == 1:
-                break
-            player2 = random.choice(self.players)
-        return [player, player2]
-
-    def swap_player(self, user):
-        pair = self.get_pair(self.players)
-        if self.ensure_distribution(pair) == :
             
-    
+
 class Question(OutLaugh):
     def __init__(self, question, players):
         for player in players:
@@ -346,15 +322,13 @@ class Question(OutLaugh):
         return True
 
 class GamePlayer:
-    def __init__(self, player):
-        self.id = player.id
-        self.name = player.name
+    def __init__(self, in_id, name):
+        self.id = in_id
+        self.name = name
         self.points = 0
     
     def add_points(self, num):
         self.points += 500 * num
-        
-
 
 loop = asyncio.get_event_loop()
 client = DiscordBot()
