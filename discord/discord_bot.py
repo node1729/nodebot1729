@@ -33,8 +33,6 @@ def get_emoji(name):
     return emojis_dict[name]
 
 # TODO: Make everything return something that makes sense with other functions
-
-
 class DiscordBot(discord.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -50,8 +48,7 @@ class DiscordBot(discord.Client):
         await self.wait_until_ready()
 
         # if the channel is not assigned properly,
-        if not self.get_channel(commands["default"]["channel"]):
-                                                                # attempt to assign it to general
+        if not self.get_channel(commands["default"]["channel"]): # attempt to assign it to general
             channel = discord.utils.get(
                 self.get_all_channels(), name="bot-commands")
             if channel:
@@ -101,7 +98,7 @@ class DiscordBot(discord.Client):
     # COMMAND HANDLER #
     ###################
 
-    # command for sending a "message" from the commands.json file
+    # command for sending a response from the commands.json file
     async def command_simple_message(self, message, key=None, from_file=None, data=None):
         if from_file:
             fp = open(from_file, "rb")
@@ -119,37 +116,46 @@ class DiscordBot(discord.Client):
                     or (not message.author.guild_permissions.administrator and not commands[key]["admin"])):
                 output = await client.get_channel(channel).send(data, file=from_file)
                 return output
-            
         return False
 
-    async def direct_message(self, channel=None, user=None, data=None, from_file=None):
+    # Send a message to either a user or a channel
+    async def direct_message(self, channel=None, user=None, data=None, from_file=None, is_player=False):
         if from_file:
             fp = open(from_file, "rb")
             from_file = discord.File(fp)
         if user: # only needed to specify when a DM is needed
+            if is_player:
+                user = user.player
+                # if not user.is_dummy:
             await user.send(content=data, file=from_file)
         else:
             output = await client.get_channel(channel).send(data, file=from_file)
-        
+
+    # spawns a game
     async def start_game(self, message):
+        for item in self.games:
+            if item.channel == message.channel.id:
+                return False
         await self.direct_message(message.channel.id, data="New game starting, type `!join` to get in on it")
-        self.games.append(OutLaugh(self.user))
+        self.games.append(OutLaugh(message))
         asyncio.run_coroutine_threadsafe(self.game(self.games[-1]), loop)
         print(repr(self.games))
-    
+        return True    
+    # async def on_reaction_add(self, reaction, user):
+    #     for item in self.games:
+    #         await item.on_reaction_add(reaction, user)
+
     async def on_message(self, message):  # returns true if command is processed
         for item in self.games:
             await item.on_message(message)
         if message.author != self.user:  # ignore messages from the bot
             if message.content.startswith("default ") or message.content == "default":
                 return False
-            print(
-                "message from {0.author} in {0.channel.id}: {0.content} ".format(message))
+            print("message from {0.author} in {0.channel.id}: {0.content} ".format(message))
             built_in_commands = {
                 "!move": self.command_move,
                 "!start": self.start_game
                 # "!connect": self.connect_to_voice
-                # "!test_react": self.test_reaction
             }
             for key in built_in_commands:
                 if message.channel.id == commands["default"]["channel"]:
@@ -215,74 +221,203 @@ class DiscordBot(discord.Client):
     # GAME STUFF #
     ##############
     
-# TODO: implement proper reading of DMs and feeding into a main game
+    async def game(self, GAME):
+        return await GAME
+    
 
-class OutLaugh():
+# TODO: implement proper reading of DMs and feeding into a main game
+# TODO: see if __init__() can be condensed at all
+class OutLaugh:
     def __init__(self, message):
         self.f = open("questions_all.txt") # replace this with default questions file
         self.questions = self.f.readlines()
         self.max_players = 8
-        self.parse_switches(message.content)
-        self.players = []
-        self.dummy_players = []
-        # self.user = user
-        self.pairs = []
-    
-    def parse_switches(switches):
-        self.switches = re.split(" ", content)
+        self.channel = message.channel.id
+        self.players = []        # real players (list of GamePlayer)
+        self.dummy_players = []  # fake players for testing (list of GamePlayer)
+        self.pairs = []          # pairs of players (list of lists of GamePlayer)
+        self.question_queue = [] # questions for each player (by id), selected ahead of time (list of lists of GamePlayer)
+        self.answered = []       # answered questions
+        self.answers = 0         # total number of answers received
+        self.reacted = []        # people who have reacted
+        self.exclude = []        # people who cannot react
+        self.broadcast = False   # if true, send messages to main channel where game is running
+        self.started = False     # if true, the game is active
+        self.waiting_for_votes = False
+        self.voted = []          # voted responses, includes player and vote decision
+        self.votes = 0           # number of people who have voted
+        self.parse_switches(message)
+
+    # extra settings
+    def parse_switches(self, switches):
+        self.switches = re.split(" ", switches.content)
         self.switches = self.switches[1:]
-        self.guild_id = message.guild.id
+        self.guild_id = switches.guild.id
         for index, item in enumerate(self.switches):
             if item == "--max_players":
                 self.max_players = int(self.switches[index + 1])
             if item == "--dummy_players":
-                for i in range(int(switches[index + 1])):
-                    self.dummy_players.append(GamePlayer(i, i , True))
-    
-    async def on_message(self, message):
-        if message.guild.id == self.guild_id:
-            if message.author != self.user:
-                print(message.author.id)
-                if message.content == "!join":
-                    if self.add_player(message.author):
-                        await client.direct_message(message.channel.id, data="{0.name} has joined the game!".format(message.author))
-                        print(repr(message.author.dm_channel))
-                        await client.direct_message(user=message.author, data="you have joined the game!")
-                        print(len(self.players))
-                    else:
-                        # TODO: make this send a non-generic message
-                        await client.direct_message(message.channel.id, data="Either an error occured, you're already in the game, or there are too many players for you to join, {0.name}".format(message.author))
-                if message.content == "!begin" and message.author == self.players[0]:
-                    for dummy in self.dummy_players:
-                        self.players.append(dummy)
-                    if self.players < 4:
-                        client.direct_message(message.channel, data="Not enough players")
-                    else:
-                        self.start_game()
-    
-    # returns true if able to add a new player
-    def add_player(self, player):
-        if len(self.players) < self.max_players:
-            if player not in self.players:
-                self.players.append(player)
+                for i in range(int(self.switches[index + 1])):
+                    self.dummy_players.append(GamePlayer(i, i, None, is_dummy=True))
+            if item == "--broadcast":
+                self.broadcast = True
+
+    # gets the next question if the user has not answered two questions
+    async def check_question(self, message):
+        for question in self.question_queue:
+            if question.player.id == message.author.id and question.is_complete:
+                self.answered[question.id].append(question) # add question to the array in which it belongs
+                self.question_queue.remove(question) # question no longer belongs here
+            if item.player.id == question.player.id and not question.is_complete: # asking any leftover questions
+                await item.ask_question(player)
                 return True
         return False
+
+    # handles adding players and beginning the game
+    async def on_message(self, message):
+        if message.author != client.user:
+            print(message.content)
+            if message.content == "!join":
+                if self.add_player(message):
+                    await client.direct_message(message.channel.id, data="{0.name} has joined the game!".format(message.author))
+                    await client.direct_message(user=message.author, data="you have joined the game!")
+                else:
+                    # TODO: make this send a non-generic message
+                    await client.direct_message(message.channel.id, data="Either an error occured, you're already in the game, or there are too many players for you to join, {0.name}".format(message.author))
+            if message.content == "!begin" and message.author.id == self.players[0].id: # logic check to prevent a random person from starting the game
+                print("attempting to begin game")
+                for dummy in self.dummy_players: # dump dummy players into main players count
+                    self.players.append(dummy)
+                for player in self.players:
+                    self.answered.append([]) # create an array for each answer pair
+                if len(self.players) < 4:
+                    await client.direct_message(message.channel, data="Not enough players")
+                else:
+                    await self.start_game()
+            if self.started and not self.waiting_for_votes:
+                await self.check_question(message)
+
+    # returns true if able to add a new player
+    def add_player(self, message):
+        if len(self.players) < self.max_players:
+            if message.author not in self.players:
+                self.players.append(GamePlayer(message.author.id, message.author.name, message))
+                return True
+        return False
+
+    # increments the answers, returning True if all people have answered
+    def increment_answered(self):
+        self.answers += 1
+        return True
+
+    def increment_voted(self):
+        self.votes += 1
+        return True
+
+    def is_complete(self):
+        if self.answers == len(self.players) * 2:
+            return True
+        return False
+
+    def voting_complete(self):
+        if self.votes == len(self.players) - 2:
+            return True
+        return False
+
+    # clean up after each round
+    def clean_up(self):
+        self.answers = 0
+        self.answered = []
+        self.pairs = []
+
+    # combines two questions into a readable response
+    def construct_message(self, questions):
+        message = questions[0].question +"\n"
+        index = 1
+        for item in questions:
+            message = str(index) + item.answer + "\n"
+            index += 1
+        return message
+
+    # creates a timer
+    async def timer(self, in_time):
+        while True:
+            if in_time < time.time():
+                return True
+            if self.is_complete():
+                return True
     
+    async def start_timer(self):
+        return await timer(time.time() + 60)
+
     # Runs the game
     # TODO: implement main game logic to start the game
-    def start_game(self):
-        while not self.set_pairs():
-            pass
-        
-        
-        
-    
+    async def start_game(self):
+        self.started = True
+        for i in range(1,4):
+            while not self.set_pairs():
+                pass
+            self.set_questions()
+
+            # display player ids
+            disp_players = []
+            for pair in self.pairs:
+                disp_players.append([])
+                for player in pair:
+                    disp_players[-1].append(player.id)
+            print(repr(disp_players))
+            
+            for question in self.question_queue:
+                print(question[0].id)
+                print(question[0].question)
+                await question[0].ask_question()
+                
+            while not self.is_complete:
+                pass
+
+            if self.is_complete():
+                random.shuffle(self.answered) # randomize list of answers
+                # start receiving messages
+                for pair in self.answered:
+                    # print(answer_pairs)
+                    self.exclude = [] # exclude these players from voting
+                    for answer in pair: # players to exclude from reacting, by id
+                        self.exclude.append(answer.player.id) 
+                    for player in self.players:
+                        if player.id in self.exclude:
+                            client.direct_message(user=player, data="You answered in this question, just hand tight, a vote here doesn't count")
+                        client.direct_message(user=player, data=self.construct_message(pair)) # send to all players
+                        if self.broadcast: # send to main channel, useful for spectators
+                            client.direct_message(channel=self.channel, data=self.construct_message(pair))
+                        if player.id not in self.exclude: # send to players that can vote
+                            client.direct_message(user=player, data="React with either `1` or `2`")
+                        await self.voting_complete()
+                
+            # clean up after each round
+            self.clean_up()
+        # stop the game
+        self.started = False
+
     # Gets and removes a question from the list
     def get_question(self):
         question = random.choice(self.questions)
         self.questions.remove(question)
         return question
     
+    # Sets all the questions and creates a queue of questions to ask each player.
+    # No two players see the same first question
+    # No two players see the same second question
+    def set_questions(self):
+        for index, pair in enumerate(self.pairs):
+            print(index)
+            print(pair)
+            question = self.get_question()
+            self.question_queue.append([])
+            print(question)
+            for player in pair:
+                self.question_queue[-1].append(Question(player, question, index))
+        print(len(self.question_queue))
+
     # Sets the pairs for the game. This is meant to be called in a while loop, as seen in start_game()
     # Returns True upon a successful configuration
     # Credit to AshEevee_ for coming up with this algorithm
@@ -292,63 +427,85 @@ class OutLaugh():
         pairs = self.pairs = []
         for p1 in players1:
             p2 = random.choice(players2)
-            if p1.id == p2.id:
+            if p1.id == p2.id: # player cannot be itself
                 return False
             pair = [p1, p2]
             for p in self.pairs:
-                if p[0].id == pair[1].id and p[1].id == pair[0].id:
+                if p[0].id == pair[1].id and p[1].id == pair[0].id: # prevents two identical pairs from existing
                     return False
                 pair = [p1, p2]
             players2.remove(p2)
             self.pairs.append(pair)
         return True
-            
-# handles questions
-class Question(OutLaugh):
-    def __init__(self, question, players):
-        self.loop = asyncio.get_running_loop()
-        self.ask_question(players, question)
-        self.player1, self.player2 = players
-        self.players = players
-        self.answers = {}
-        self.complete = False
-        self.waiting = []
+    
+    async def create_question(self, QUESTION):
+        return await QUESTION
+    
+    async def create_timer(self, TIMER):
+        return await TIMER
 
-    def on_message(self, message):
-        for player in self.players:
-            if player.id == message.author.id and player.id not in self.answers:
-                recv_question(player, message)
+class Vote(OutLaugh):
+    def __init__(self, player):
+        self.player = player
+        self.vote = ""
+        self.loop = asyncio.get_running_loop()
+        if player.is_dummy:
+            self.vote = 0
+
+    async def on_message(self, message):
+        if message.author.id == self.player.id and super().started and player.id not in super().exclude:
+            try:
+                self.vote = int(message.content) - 1
+                if self.vote not in range(2):
+                    raise ValueError()
+                super().increment_voted()
+            except ValueError:
+                await client.direct_message(user=player, data="Invalid Response")
+
+class Question(OutLaugh):
+    def __init__(self, player, question, question_id):
+        self.id = question_id
+        self.question = question
+        self.loop = asyncio.get_running_loop()
+        self.player = player
         
+        self.answer = ""
+        self.complete = False
+    
+    # TODO: Implement reading message
+    async def on_message(self, message):
+        if self.player.id == message.author.id:
+            await self.recv_answer(message)
+
     # upon receiving a an answer, add it to the answers dict
-    def recv_answer(self, player, answer):
-        self.answers[player.id] = answer.content
-        self.waiting.remove(player)
+    async def recv_answer(self, message=None):
+        if self.player.is_dummy:
+            self.answer = str(self.player.id)
+        else:
+            self.answer = message.content
+        self.complete = True
         return True
-    
-    def ask_question(self, players, question):
-        for player in players:
-            if player not in waiting:
-                if player.is_dummy:
-                    self.recv_question(player, str(player.id))
-                else:
-                    client.direct_message(user=user, content=question)
-                    self.waiting.append(player)
+
+    async def ask_question(self):
+        if not self.player.is_dummy:
+            await client.direct_message(user=self.player, data=self.question, is_player=True)
+        else:
+            await self.recv_answer()
         return True
-    
-    def is_question_complete(self):
-        if len(self.answers) == 2:
-            return True
-        return False
 
 class GamePlayer:
-    def __init__(self, in_id, name, is_dummy=False):
+    def __init__(self, in_id, name, message, is_dummy=False):
         self.id = in_id
         self.name = name
+        self.player = None
         self.is_dummy = is_dummy
+        if not self.is_dummy:
+            self.player = message.author
         self.points = 0
-    
-    def add_points(self, num):
-        self.points += 500 * num
+
+    def add_points(self, num, total):
+        self.points += round(1000 * (num / total))
+        
 
 loop = asyncio.get_event_loop()
 client = DiscordBot()
