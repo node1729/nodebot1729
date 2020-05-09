@@ -34,6 +34,7 @@ class OutLaugh():
                 return True
         return False
     
+    # Runs the gamei
     # TODO: implement main game logic to start the game
     def start_game(self):
         while not self.set_pairs():
@@ -47,7 +48,8 @@ class OutLaugh():
         print(pairs_disp)
         # for pair in self.pairs:
             # Question.ask_question()
-
+    
+    # Gets and removes a question from the list
     def get_question(self):
         question = random.choice(self.questions)
         self.questions.remove(question)
@@ -72,7 +74,7 @@ class OutLaugh():
             players2.remove(p2)
             self.pairs.append(pair)
         return True
-
+    
 class Question(OutLaugh):
     def __init__(self, question, players):
         for player in players:
