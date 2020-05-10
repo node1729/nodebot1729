@@ -264,19 +264,28 @@ class OutLaugh:
 
     # gets the next question if the user has not answered two questions
     async def check_question(self, message):
-        for question in self.question_queue:
-            if question.player.id == message.author.id and question.is_complete:
-                self.answered[question.id].append(question) # add question to the array in which it belongs
-                self.question_queue.remove(question) # question no longer belongs here
-            if item.player.id == question.player.id and not question.is_complete: # asking any leftover questions
-                await item.ask_question(player)
-                return True
+        for questions in self.question_queue:
+            for index, question in enumerate(questions):
+                if question.player.id == message.author.id and question.answer:
+                    self.answered[question.id].append(question) # add question to the array in which it belongs
+                    self.question_queue[index].remove(question) # question no longer belongs here
+                    return True
+                elif not question.answer and question.player.id == message.author.id: # asking any leftover questions
+                    await question.ask_question()
+                    return True
+                    
         return False
 
     # handles adding players and beginning the game
     async def on_message(self, message):
         if message.author != client.user:
-            print(message.content)
+            for questions in self.question_queue:
+                for question in questions:
+                    await question.on_message(message)
+                    print(self.question_queue)
+                    break
+            for vote in self.voted:
+                await vote.on_message(message)
             if message.content == "!join":
                 if self.add_player(message):
                     await client.direct_message(message.channel.id, data="{0.name} has joined the game!".format(message.author))
@@ -288,8 +297,6 @@ class OutLaugh:
                 print("attempting to begin game")
                 for dummy in self.dummy_players: # dump dummy players into main players count
                     self.players.append(dummy)
-                for player in self.players:
-                    self.answered.append([]) # create an array for each answer pair
                 if len(self.players) < 4:
                     await client.direct_message(message.channel, data="Not enough players")
                 else:
@@ -315,7 +322,7 @@ class OutLaugh:
         return True
 
     def is_complete(self):
-        if self.answers == len(self.players) * 2:
+        if len(self.answered) == len(self.players) * 2:
             return True
         return False
 
@@ -346,55 +353,60 @@ class OutLaugh:
                 return True
             if self.is_complete():
                 return True
-    
+
     async def start_timer(self):
         return await timer(time.time() + 60)
 
     # Runs the game
     # TODO: implement main game logic to start the game
     async def start_game(self):
+        for player in self.players:
+            self.answered.append([]) # create an array for each answer pair
         self.started = True
-        for i in range(1,4):
-            while not self.set_pairs():
-                pass
-            self.set_questions()
-
-            # display player ids
-            disp_players = []
-            for pair in self.pairs:
-                disp_players.append([])
-                for player in pair:
-                    disp_players[-1].append(player.id)
-            print(repr(disp_players))
-            
-            for question in self.question_queue:
-                print(question[0].id)
-                print(question[0].question)
-                await question[0].ask_question()
-                
-            while not self.is_complete:
-                pass
-
-            if self.is_complete():
-                random.shuffle(self.answered) # randomize list of answers
-                # start receiving messages
-                for pair in self.answered:
-                    # print(answer_pairs)
-                    self.exclude = [] # exclude these players from voting
-                    for answer in pair: # players to exclude from reacting, by id
-                        self.exclude.append(answer.player.id) 
-                    for player in self.players:
-                        if player.id in self.exclude:
-                            client.direct_message(user=player, data="You answered in this question, just hand tight, a vote here doesn't count")
-                        client.direct_message(user=player, data=self.construct_message(pair)) # send to all players
-                        if self.broadcast: # send to main channel, useful for spectators
-                            client.direct_message(channel=self.channel, data=self.construct_message(pair))
-                        if player.id not in self.exclude: # send to players that can vote
-                            client.direct_message(user=player, data="React with either `1` or `2`")
-                        await self.voting_complete()
-                
-            # clean up after each round
-            self.clean_up()
+        can_advance = True
+        curr_round = 1
+        while curr_round < 4:
+        # for i in range(1,4):
+            if can_advance:
+                can_advance = False
+                while not self.set_pairs():
+                    pass
+                self.set_questions()
+    
+                # display player ids
+                disp_players = []
+                for pair in self.pairs:
+                    disp_players.append([])
+                    for player in pair:
+                        disp_players[-1].append(player.id)
+                print(repr(disp_players))
+    
+                for questions in self.question_queue:
+                    for question in questions:
+                        await question.ask_question()
+                        break
+            else:
+                await asyncio.sleep(1)
+                if self.is_complete():
+                    random.shuffle(self.answered) # randomize list of answers
+                    # start receiving messages
+                    for pair in self.answered:
+                        # print(answer_pairs)
+                        self.exclude = [] # exclude these players from voting
+                        for answer in pair: # players to exclude from reacting, by id
+                            self.exclude.append(answer.player.id) 
+                        for player in self.players:
+                            if player.id in self.exclude:
+                                client.direct_message(user=player, data="You answered in this question, just hang tight, a vote here doesn't count")
+                            client.direct_message(user=player, data=self.construct_message(pair)) # send to all players
+                            if self.broadcast: # send to main channel, useful for spectators
+                                client.direct_message(channel=self.channel, data=self.construct_message(pair))
+                            if player.id not in self.exclude: # send to players that can vote
+                                client.direct_message(user=player, data="React with either `1` or `2`")
+                            await self.voting_complete()
+                    can_advance = True                
+                    # clean up after each round
+                    self.clean_up()
         # stop the game
         self.started = False
 
@@ -416,7 +428,8 @@ class OutLaugh:
             print(question)
             for player in pair:
                 self.question_queue[-1].append(Question(player, question, index))
-        print(len(self.question_queue))
+                # print(index)
+        # print(len(self.question_queue))
 
     # Sets the pairs for the game. This is meant to be called in a while loop, as seen in start_game()
     # Returns True upon a successful configuration
@@ -437,17 +450,17 @@ class OutLaugh:
             players2.remove(p2)
             self.pairs.append(pair)
         return True
-    
+
     async def create_question(self, QUESTION):
         return await QUESTION
-    
+
     async def create_timer(self, TIMER):
         return await TIMER
 
 class Vote(OutLaugh):
     def __init__(self, player):
         self.player = player
-        self.vote = ""
+        self.vote = None
         self.loop = asyncio.get_running_loop()
         if player.is_dummy:
             self.vote = 0
@@ -458,7 +471,6 @@ class Vote(OutLaugh):
                 self.vote = int(message.content) - 1
                 if self.vote not in range(2):
                     raise ValueError()
-                super().increment_voted()
             except ValueError:
                 await client.direct_message(user=player, data="Invalid Response")
 
@@ -468,13 +480,12 @@ class Question(OutLaugh):
         self.question = question
         self.loop = asyncio.get_running_loop()
         self.player = player
-        
         self.answer = ""
-        self.complete = False
     
     # TODO: Implement reading message
     async def on_message(self, message):
         if self.player.id == message.author.id:
+            print("Attempting to receive answer from {}".format(message.author.name))
             await self.recv_answer(message)
 
     # upon receiving a an answer, add it to the answers dict
@@ -483,7 +494,8 @@ class Question(OutLaugh):
             self.answer = str(self.player.id)
         else:
             self.answer = message.content
-        self.complete = True
+        print(repr(self.answer))
+        print("Player " + str(self.player.id) + " Finished with question " + str(self.id))
         return True
 
     async def ask_question(self):
