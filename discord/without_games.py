@@ -83,7 +83,6 @@ class DiscordBot(discord.Client):
         # self.bg_task = self.loop.create_task(self.background_timer())
         self.loop.create_task(self.config_default_channel())
         self.vcs = []
-        self.music_queues = {}  # {message.guild.id: {index: i, queue: []}}
         discord.opus.load_opus("libopus.so.0")
 
     async def on_ready(self):
@@ -176,14 +175,16 @@ class DiscordBot(discord.Client):
 
     async def on_message(self, message):  # returns true if command is processed
         if message.author != self.user:  # ignore messages from the bot
+            for item in self.vcs: # pass down to classes
+                await item.on_message(message)
             if message.content.startswith("default ") or message.content == "default":
                 return False
             print("message from {0.author} in {0.channel.id}: {0.content} ".format(message))
             built_in_commands = {
                 "!move": self.command_move,
                 "!connect": self.connect_to_voice,
-                "!disconnect": self.disconnect_from_voice,
-                "!play": self.create_queue
+                # "!disconnect": self.disconnect_from_voice,
+                # "!play": self.create_queue
             }
             for key in built_in_commands:
                 # if message.channel.id == commands["default"]["channel"]:
@@ -199,69 +200,89 @@ class DiscordBot(discord.Client):
                             return output
         return False
 
+    async def connect_to_voice(self, message):
+        for vc in self.vcs:
+            if vc.guild.id == message.guild.id:
+                await vc.connect_to_voice(message)
+                return True
+        self.vcs.append(MusicPlayer(message.guild, message))
+        await self.vcs[-1].connect_to_voice(message)
+
     # creates a reaction on a message
     async def make_react(self, message, emoji):
         await message.add_reaction(get_emoji(emoji))
         return True
 
-    # #########
-    # # MUSIC #
-    # #########
+    #########
+    # MUSIC #
+    #########
+
+class MusicPlayer:
+    def __init__(self, guild, message):
+        self.guild = guild
+        self.message = message
+        self.index = 0
+        self.queue = []
+        self.vc = None
+        self.loop = asyncio.get_running_loop()
+    
+    async def on_message(self, message):
+        if message.author != client.user and message.guild.id == self.guild.id:
+            print(message.content)
+            if message.content[:len("!play")] == "!play":
+                await self.create_queue(message)
     
     #connect to voice and add to self.vcs
     async def connect_to_voice(self, message):
         voice_channel = discord.utils.get(message.guild.voice_channels, name="General", bitrate=64000)
-        vc = await voice_channel.connect()
-        self.vcs.append(vc)
-        
+        self.vc = await voice_channel.connect()
+    
+    #remove voice connection, does not terminate class
     async def disconnect_from_voice(self, message):
-        for vc in self.vcs:
-            if vc.guild.id == message.guild.id:
-                self.music_queues[message.guild.id]["queue"] = []
-                await vc.disconnect()
-                
-    async def create_queue(self, message):
-        try:
-            self.music_queues[message.guild.id]
-        except KeyError:
-            await self.connect_to_voice(message)
-        content = message.content[len("!play "):]
-        if message.guild.id not in self.music_queues: # add guild to current active queues
-            self.music_queues[message.guild.id] = {"index": 0, "queue": []}
-        self.music_queues[message.guild.id]["queue"].append(content)
-        print(self.music_queues[message.guild.id]["queue"])
-        for vc in self.vcs:
-            if vc.guild.id == message.guild.id:
-                if not vc.is_playing() and not vc.is_paused(): # check if no music is currently active
-                    await self.play_video(message, vc)
-
-    async def on_video_end(self, message):
-        print(message)
-        vc.stop() # end audio stream
-        print(self.music_queues)
-        if self.music_queues[message.guild.id]["index"] + 1 < len(self.music_queues[message.guild.id]["queue"]):
-            if self.music_queues[message.guild.id]["index"] > 0:
-                self.music_queues[message.guild.id]["index"] += 1
-            await self.play_video(message, vc)
-        else:
-            await self.direct_message(channel=message.channel.id, data="Reached end of queue, automatically disconnecting")
-            await self.disconnect_from_voice(message)
-            
-    async def play_video(self, message, vc=None):
-        index = self.music_queues[message.guild.id]["index"]
-        player = await YTDLSource.from_url(self.music_queues[message.guild.id]["queue"][index])
-        print(self.music_queues[message.guild.id]["queue"][index])
-        await self.direct_message(channel=message.channel.id, data="Attempting to play video {0.title}".format(player))
-        if not vc:
-            for vc in self.vcs:
-                if vc.guild.id == message.guild.id:
-                    vc.play(player, after=await self.on_video_end(message, vc))
-        else:
-            try:
-                vc.play(player, after=await self.on_video_end)
-            except (discord.ClientException, TypeError, discord.opus.OpusNotLoaded) as e:
-                print(e)
+        await self.vc.disconnect()
         
+    async def create_queue(self, message):
+        content = message.content[len("!play "):]
+        self.queue.append(content)
+        print(self.queue)
+        if not self.vc.is_playing() and not self.vc.is_paused(): # check if no music is currently active
+            await self.play_video(message)
+
+    async def direct_message(self, channel, data):
+        await client.direct_message(channel=channel, data=data)
+    
+    def on_video_end(self, e):
+        if not e: # no errors occurred
+            self.vc.stop()
+            self.index += 1
+            if self.index >= len(self.queue):
+                loop.create_task(self.direct_message(channel=self.message.channel.id, data="Reached end of queue"))
+                loop.create_task(self.disconnect_from_voice(self.message))
+            else:
+                loop.create_task(self.play_video(self.message))
+                
+                
+
+    # async def on_video_end(self, message):
+    #     print(message)
+    #     vc.stop() # end audio stream
+    #     print(self.music_queues)
+    #     if self.music_queues[message.guild.id]["index"] + 1 < len(self.music_queues[message.guild.id]["queue"]):
+    #         if self.music_queues[message.guild.id]["index"] > 0:
+    #             self.music_queues[message.guild.id]["index"] += 1
+    #         await self.play_video(message, vc)
+    #     else:
+    #         await self.direct_message(channel=message.channel.id, data="Reached end of queue, automatically disconnecting")
+    #         await self.disconnect_from_voice(message)
+            
+    async def play_video(self, message):
+        player = await YTDLSource.from_url(self.queue[self.index])
+        await client.direct_message(channel=message.channel.id, data="Attempting to play video {0.title}".format(player))
+        try:
+            self.vc.play(player, after=self.on_video_end)
+        except (discord.ClientException, TypeError, discord.opus.OpusNotLoaded) as e:
+            print(e)
+    
 
 loop = asyncio.get_event_loop()
 client = DiscordBot()
