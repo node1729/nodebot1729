@@ -218,7 +218,7 @@ class DiscordBot(discord.Client):
         for vc in self.vcs:
             if vc.guild.id == message.guild.id:
                 self.music_queues[message.guild.id]["queue"] = []
-                # await vc.disconnect()
+                await vc.disconnect()
                 
     async def create_queue(self, message):
         try:
@@ -235,7 +235,8 @@ class DiscordBot(discord.Client):
                 if not vc.is_playing() and not vc.is_paused(): # check if no music is currently active
                     await self.play_video(message, vc)
 
-    async def on_video_end(self, message, vc):
+    async def on_video_end(self, message):
+        print(message)
         vc.stop() # end audio stream
         print(self.music_queues)
         if self.music_queues[message.guild.id]["index"] + 1 < len(self.music_queues[message.guild.id]["queue"]):
@@ -256,7 +257,10 @@ class DiscordBot(discord.Client):
                 if vc.guild.id == message.guild.id:
                     vc.play(player, after=await self.on_video_end(message, vc))
         else:
-            vc.play(player, after=await self.on_video_end(message, vc))
+            try:
+                vc.play(player, after=await self.on_video_end)
+            except (discord.ClientException, TypeError, discord.opus.OpusNotLoaded) as e:
+                print(e)
         
 
 loop = asyncio.get_event_loop()
