@@ -44,15 +44,15 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.url = data.get('url')
 
     @classmethod
-    async def from_url(cls, url, *, loop=None, stream=False):
+    async def from_url(cls, url, *, loop=None, stream=True):
         loop = loop or asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=stream))
 
         if 'entries' in data:
             # take first item from a playlist
             data = data['entries'][0]
 
-        filename = data['url'] if stream else ytdl.prepare_filename(data)
+        filename = data['url'] if not stream else ytdl.prepare_filename(data)
         return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
 
 # commands file
@@ -164,12 +164,12 @@ class DiscordBot(discord.Client):
         return False
 
     # Send a message to either a user or a channel
-    async def direct_message(self, channel=None, user=None, data=None, from_file=None):
+    async def direct_message(self, channel=None, user=None, data=None, from_file=None, embed=None):
         if from_file:
             fp = open(from_file, "rb")
             from_file = discord.File(fp)
         if user: # only needed to specify when a DM is needed
-            await user.send(content=data, file=from_file)
+            await user.send(content=data, file=from_file, embed=embed)
         else:
             output = await client.get_channel(channel).send(data, file=from_file)
 
@@ -224,61 +224,121 @@ class MusicPlayer:
         self.index = 0
         self.queue = []
         self.vc = None
+        self.time = None
+        self.repeat = 0 # 1 if on
         self.loop = asyncio.get_running_loop()
+    
+    def convert_time(self, seconds):
+        s = seconds % 60
+        m = seconds // 60
+        h = seconds // 3600
+        if h:
+            m = ":" + str(m).zfill(2)
+        else:
+            h = ""
+        return str(h) + str(m) + ":" + str(s).zfill(2)
     
     async def on_message(self, message):
         if message.author != client.user and message.guild.id == self.guild.id:
             print(message.content)
-            if message.content[:len("!play")] == "!play":
-                await self.create_queue(message)
+                
+            commands = {"!play": self.create_queue,
+                        "!skip": self.skip,
+                        "!queue": self.display_queue,
+                        "!disconnect": self.disconnect_from_voice,
+                        "!repeat": self.toggle_repeat,
+                        "!help": self.help,
+                        "!np": self.now_playing
+            }
+            for key in commands:
+                if message.content[:len(key)] == key:
+                    await commands[key](message)
+    
+    async def help(self, message):
+        fp = open("help.txt")
+        outstr = ""
+        for item in fp.readlines():
+            outstr += item
+        await self.direct_message(message.channel.id, data=outstr)
     
     #connect to voice and add to self.vcs
     async def connect_to_voice(self, message):
-        voice_channel = discord.utils.get(message.guild.voice_channels, name="General", bitrate=64000)
+        voice_channel = discord.utils.get(message.guild.voice_channels)
         self.vc = await voice_channel.connect()
+    
+    async def toggle_repeat(self, message):
+        self.repeat += 1
+        self.repeat %= 2
+        await self.direct_message(channel=message.channel.id, data="Repeat turned {}".format("on" if self.repeat else "off"))
+    
+    async def display_queue(self, message):
+        outstr = "```"
+        for i in range(min(len(self.queue[self.index:]), 20)):
+            item = self.queue[self.index:][i]
+            part1 = ""
+            if len(item[1][0]) >= 64:
+                part1 = item[1][0][:17] + "..."
+            else:
+                part1 = item[1][0]
+            part3 = item[1][1]
+            part2 = ""
+            for i in range(67 - len(part1) - len(part3)):
+                part2 += " "
+            outstr += part1 + part2 + part3 + "\n"
+        outstr += "```"
+        await self.direct_message(message.channel.id, data=outstr)
+    
+    async def now_playing(self, message):
+        if self.time is None:
+            await self.direct_message(message.channel.id, data="```Nothing currently playing```")
+        else:
+            current_time = time.time() // 1
+            playtime = current_time - self.time
+            outstr = "```" + self.queue[self.index][1][0] + "\n"
+            percent = playtime / int(self.queue[self.index][1][2]) * 100 // 1
+            outstr += percent + "% " + self.convert_time(playtime) + "/" self.queue[self.index][1][1] + "```"
+            await self.direct_message(message.channel.id, data=outstr)
     
     #remove voice connection, does not terminate class
     async def disconnect_from_voice(self, message):
+        self.time = None
+        self.queue = []
         await self.vc.disconnect()
         
     async def create_queue(self, message):
         content = message.content[len("!play "):]
-        self.queue.append(content)
+        info = await YTDLSource.from_url(message.content[len("!play "):], stream=False)
+        # embed = discord.Embed(title="New item in queue", description=info.data["title"] + " " + self.convert_time(info.data["duration"]))
+        # await self.direct_message(channel=message.channel.id, embed=embed)
+        self.queue.append([content, [info.data["title"], self.convert_time(info.data["duration"]), info.data["duration"]]])
         print(self.queue)
         if not self.vc.is_playing() and not self.vc.is_paused(): # check if no music is currently active
             await self.play_video(message)
 
-    async def direct_message(self, channel, data):
-        await client.direct_message(channel=channel, data=data)
+    async def direct_message(self, channel, data=None, embed=None):
+        await client.direct_message(channel=channel, data=data, embed=embed)
+    
+    async def skip(self, message):
+        await self.direct_message(message.channel.id, data="Skipping track!")
+        self.vc.stop()
     
     def on_video_end(self, e):
+        self.time = None
         if not e: # no errors occurred
             self.vc.stop()
-            self.index += 1
-            if self.index >= len(self.queue):
-                loop.create_task(self.direct_message(channel=self.message.channel.id, data="Reached end of queue"))
-                loop.create_task(self.disconnect_from_voice(self.message))
+            if not self.repeat:
+                self.index += 1
+                if self.index >= len(self.queue):
+                    loop.create_task(self.direct_message(channel=self.message.channel.id, data="Reached end of queue"))
+                    # loop.create_task(self.disconnect_from_voice(self.message))
             else:
                 loop.create_task(self.play_video(self.message))
-                
-                
-
-    # async def on_video_end(self, message):
-    #     print(message)
-    #     vc.stop() # end audio stream
-    #     print(self.music_queues)
-    #     if self.music_queues[message.guild.id]["index"] + 1 < len(self.music_queues[message.guild.id]["queue"]):
-    #         if self.music_queues[message.guild.id]["index"] > 0:
-    #             self.music_queues[message.guild.id]["index"] += 1
-    #         await self.play_video(message, vc)
-    #     else:
-    #         await self.direct_message(channel=message.channel.id, data="Reached end of queue, automatically disconnecting")
-    #         await self.disconnect_from_voice(message)
             
     async def play_video(self, message):
-        player = await YTDLSource.from_url(self.queue[self.index])
-        await client.direct_message(channel=message.channel.id, data="Attempting to play video {0.title}".format(player))
+        player = await YTDLSource.from_url(self.queue[self.index][0])
+        await self.direct_message(channel=message.channel.id, data="Attempting to play video {0.title}".format(player))
         try:
+            self.time = time.time() // 1
             self.vc.play(player, after=self.on_video_end)
         except (discord.ClientException, TypeError, discord.opus.OpusNotLoaded) as e:
             print(e)
