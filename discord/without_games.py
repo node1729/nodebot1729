@@ -163,6 +163,18 @@ class DiscordBot(discord.Client):
                 return output
         return False
 
+    async def gpt2(self, message):
+        rand_files = os.listdir("/media/nginx/nginx/webserver/samples/deathjohnson/")
+        rand_files.remove("counter.txt")
+        randfile = random.choice(rand_files)
+        fp = open("/media/nginx/nginx/webserver/samples/deathjohnson/" + randfile)
+        lines = fp.readlines()
+        output = random.choice(lines)
+        while output[0] == "=":
+            output = random.choice(lines)
+        await self.direct_message(message.channel.id, data=output)
+        
+    
     # Send a message to either a user or a channel
     async def direct_message(self, channel=None, user=None, data=None, from_file=None, embed=None):
         if from_file:
@@ -183,6 +195,7 @@ class DiscordBot(discord.Client):
             built_in_commands = {
                 "!move": self.command_move,
                 "!connect": self.connect_to_voice,
+                "!gpt2": self.gpt2
                 # "!disconnect": self.disconnect_from_voice,
                 # "!play": self.create_queue
             }
@@ -230,7 +243,7 @@ class MusicPlayer:
     
     def convert_time(self, seconds):
         s = seconds % 60
-        m = seconds // 60
+        m = seconds // 60 % 60
         h = seconds // 3600
         if h:
             m = ":" + str(m).zfill(2)
@@ -292,11 +305,11 @@ class MusicPlayer:
         if self.time is None:
             await self.direct_message(message.channel.id, data="```Nothing currently playing```")
         else:
-            current_time = time.time() // 1
-            playtime = current_time - self.time
+            current_time = int(time.time())
+            playtime = int(current_time - self.time)
             outstr = "```" + self.queue[self.index][1][0] + "\n"
-            percent = playtime / int(self.queue[self.index][1][2]) * 100 // 1
-            outstr += percent + "% " + self.convert_time(playtime) + "/" self.queue[self.index][1][1] + "```"
+            percent = int(playtime / int(self.queue[self.index][1][2]) * 100)
+            outstr += str(int(percent)) + "% " + self.convert_time(playtime) + "/" + self.queue[self.index][1][1] + "```"
             await self.direct_message(message.channel.id, data=outstr)
     
     #remove voice connection, does not terminate class
@@ -331,8 +344,8 @@ class MusicPlayer:
                 if self.index >= len(self.queue):
                     loop.create_task(self.direct_message(channel=self.message.channel.id, data="Reached end of queue"))
                     # loop.create_task(self.disconnect_from_voice(self.message))
-            else:
-                loop.create_task(self.play_video(self.message))
+                else:
+                    loop.create_task(self.play_video(self.message))
             
     async def play_video(self, message):
         player = await YTDLSource.from_url(self.queue[self.index][0])
