@@ -9,11 +9,10 @@ import os
 import re
 import youtube_dl
 from MusicPlayer import MusicPlayer
+
 # start out by grabbing client info
 clientinfo = open("clientinfo.json")
 clientdict = json.load(clientinfo)
-
-
 
 # commands file
 try:
@@ -35,7 +34,6 @@ emojis_dict = json.load(emoji_file)
 
 gpt2 = open("gpt2.txt")
 gpt2 = gpt2.readlines()
-
 
 def get_emoji(name):
     return emojis_dict[name]
@@ -181,7 +179,8 @@ class DiscordBot(discord.Client):
             built_in_commands = {
                 "!move": self.command_move,
                 "!connect": self.connect_to_voice,
-                "!gpt2": self.gpt2
+                "!gpt2": self.gpt2,
+                "!disconnect": self.disconnect_from_voice
                 # "!disconnect": self.disconnect_from_voice,
                 # "!play": self.create_queue
             }
@@ -207,6 +206,13 @@ class DiscordBot(discord.Client):
         self.vcs.append(MusicPlayer(message.guild, self, message))
         await self.vcs[-1].connect_to_voice(message)
 
+    async def disconnect_from_voice(self, message):
+        for idx, vc in enumerate(self.vcs):
+            if vc.guild.id == message.guild.id:
+                await vc.disconnect_from_voice(message)
+                del self.vcs[idx]
+                return True
+    
     # creates a reaction on a message
     async def make_react(self, message, emoji):
         await message.add_reaction(get_emoji(emoji))

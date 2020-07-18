@@ -115,8 +115,8 @@ class MusicPlayer:
     #remove voice connection, does not terminate class
     async def disconnect_from_voice(self, message):
         self.time = None
+        self.queue = []
         await self.vc.disconnect()
-        self.queue = [] 
         self.index = 0 # placed after disconnection because on_video_end is called and increments the index, causing an error upon reconnecting
     
     # convert a large dict to a smaller one
@@ -147,9 +147,12 @@ class MusicPlayer:
         if not self.vc.is_playing() and not self.vc.is_paused(): # check if no music is currently active
             await self.play_video(message)
         for idx, item in enumerate(self.queue):
-            if "duration" not in item:
-                self.queue[idx] = self.shrink_dict(await YTDLSource.grab_metadata("youtu.be/" + item["id"], stream=False))
-        
+            try:
+                if "duration" not in item:
+                    self.queue[idx] = self.shrink_dict(await YTDLSource.grab_metadata("youtu.be/" + item["id"], stream=False))
+            except IndexError:
+                pass
+
     # send messages to the channel the bot was called from
     async def direct_message(self, channel, data=None, embed=None):
         await self.bot.direct_message(channel=channel, data=data, embed=embed)
@@ -167,10 +170,10 @@ class MusicPlayer:
             if not self.repeat: # repeating won't increment the index, turning off repeat will continue the queue
                 self.index += 1
                 if self.index >= len(self.queue):
-                    loop.create_task(self.direct_message(channel=self.message.channel.id, data="Reached end of queue"))
+                    self.loop.create_task(self.direct_message(channel=self.message.channel.id, data="Reached end of queue"))
                     # loop.create_task(self.disconnect_from_voice(self.message))
                 else:
-                    loop.create_task(self.play_video(self.message))
+                    self.loop.create_task(self.play_video(self.message))
 
     # download and play the video
     async def play_video(self, message):
